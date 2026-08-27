@@ -1,9 +1,19 @@
 const express = require("express");
 const cors = require("cors");
+const { MongoClient } = require("mongodb");
 
 const app = express();
 
 const PORT = process.env.PORT || 3000;
+const MONGODB_URI = process.env.MONGODB_URI;
+
+const DB_NAME = "usma_universe";
+const COLLECTION_NAME = "stories";
+
+
+// ==========================================
+// MIDDLEWARE
+// ==========================================
 
 app.use(cors({
     origin: "*"
@@ -15,14 +25,88 @@ app.use(express.json({
 
 
 // ==========================================
+// MONGODB
+// ==========================================
+
+let db;
+let storiesCollection;
+
+async function connectDatabase() {
+
+    if (!MONGODB_URI) {
+
+        console.error(
+            "MONGODB_URI environment variable is missing."
+        );
+
+        process.exit(1);
+
+    }
+
+    try {
+
+        const client =
+            new MongoClient(MONGODB_URI);
+
+        await client.connect();
+
+        db =
+            client.db(DB_NAME);
+
+        storiesCollection =
+            db.collection(COLLECTION_NAME);
+
+        await db.command({
+            ping: 1
+        });
+
+        console.log(
+            "================================="
+        );
+
+        console.log(
+            "MongoDB Atlas connected successfully."
+        );
+
+        console.log(
+            `Database: ${DB_NAME}`
+        );
+
+        console.log(
+            `Collection: ${COLLECTION_NAME}`
+        );
+
+        console.log(
+            "================================="
+        );
+
+    } catch (error) {
+
+        console.error(
+            "MongoDB connection error:",
+            error
+        );
+
+        process.exit(1);
+
+    }
+
+}
+
+
+// ==========================================
 // HOME
 // ==========================================
 
 app.get("/", (req, res) => {
 
     res.json({
+
         success: true,
-        message: "USMA Universe Backend is running."
+
+        message:
+            "USMA Universe Backend is running."
+
     });
 
 });
@@ -32,28 +116,50 @@ app.get("/", (req, res) => {
 // HEALTH CHECK
 // ==========================================
 
-app.get("/api/health", (req, res) => {
+app.get("/api/health", async (req, res) => {
 
-    res.json({
-        success: true,
-        status: "online"
-    });
+    try {
+
+        await db.command({
+            ping: 1
+        });
+
+        res.json({
+
+            success: true,
+
+            status:
+                "online",
+
+            database:
+                "connected"
+
+        });
+
+    } catch (error) {
+
+        res.status(500).json({
+
+            success: false,
+
+            status:
+                "offline",
+
+            database:
+                "disconnected"
+
+        });
+
+    }
 
 });
-
-
-// ==========================================
-// TEMPORARY STORIES DATABASE
-// ==========================================
-
-let stories = [];
 
 
 // ==========================================
 // SUBMIT STORY
 // ==========================================
 
-app.post("/api/stories", (req, res) => {
+app.post("/api/stories", async (req, res) => {
 
     try {
 
@@ -64,12 +170,44 @@ app.post("/api/stories", (req, res) => {
         } = req.body;
 
 
-        // Check required information
+        // Check required fields
 
         if (
             !firstName ||
             !lastName ||
             !story
+        ) {
+
+            return res.status(400).json({
+
+                success: false,
+
+                message:
+                    "Please complete all required fields."
+
+            });
+
+        }
+
+
+        // Clean input
+
+        const cleanFirstName =
+            firstName.trim();
+
+        const cleanLastName =
+            lastName.trim();
+
+        const cleanStory =
+            story.trim();
+
+
+        // Check empty values
+
+        if (
+            !cleanFirstName ||
+            !cleanLastName ||
+            !cleanStory
         ) {
 
             return res.status(400).json({
@@ -95,13 +233,13 @@ app.post("/api/stories", (req, res) => {
                     .slice(-6),
 
             firstName:
-                firstName.trim(),
+                cleanFirstName,
 
             lastName:
-                lastName.trim(),
+                cleanLastName,
 
             story:
-                story.trim(),
+                cleanStory,
 
             status:
                 "PENDING",
@@ -112,9 +250,11 @@ app.post("/api/stories", (req, res) => {
         };
 
 
-        // Save story
+        // Save to MongoDB
 
-        stories.push(newStory);
+        await storiesCollection.insertOne(
+            newStory
+        );
 
 
         console.log(
@@ -147,7 +287,10 @@ app.post("/api/stories", (req, res) => {
 
     } catch (error) {
 
-        console.error(error);
+        console.error(
+            "Submit story error:",
+            error
+        );
 
         res.status(500).json({
 
@@ -167,48 +310,104 @@ app.post("/api/stories", (req, res) => {
 // GET PENDING STORIES
 // ==========================================
 
-app.get("/api/stories/pending", (req, res) => {
+app.get(
+    "/api/stories/pending",
+    async (req, res) => {
 
-    const pendingStories =
-        stories.filter(
-            story => story.status === "PENDING"
-        );
+        try {
+
+            const pendingStories =
+                await storiesCollection
+                    .find({
+                        status: "PENDING"
+                    })
+                    .sort({
+                        submittedAt: -1
+                    })
+                    .toArray();
 
 
-    res.json({
+            res.json({
 
-        success: true,
+                success: true,
 
-        stories:
-            pendingStories
+                stories:
+                    pendingStories
 
-    });
+            });
 
-});
+        } catch (error) {
+
+            console.error(
+                "Get pending stories error:",
+                error
+            );
+
+            res.status(500).json({
+
+                success: false,
+
+                message:
+                    "Server error."
+
+            });
+
+        }
+
+    }
+);
 
 
 // ==========================================
 // GET APPROVED STORIES
 // ==========================================
 
-app.get("/api/stories/approved", (req, res) => {
+app.get(
+    "/api/stories/approved",
+    async (req, res) => {
 
-    const approvedStories =
-        stories.filter(
-            story => story.status === "APPROVED"
-        );
+        try {
+
+            const approvedStories =
+                await storiesCollection
+                    .find({
+                        status: "APPROVED"
+                    })
+                    .sort({
+                        approvedAt: -1
+                    })
+                    .toArray();
 
 
-    res.json({
+            res.json({
 
-        success: true,
+                success: true,
 
-        stories:
-            approvedStories
+                stories:
+                    approvedStories
 
-    });
+            });
 
-});
+        } catch (error) {
+
+            console.error(
+                "Get approved stories error:",
+                error
+            );
+
+            res.status(500).json({
+
+                success: false,
+
+                message:
+                    "Server error."
+
+            });
+
+        }
+
+    }
+);
 
 
 // ==========================================
@@ -217,46 +416,100 @@ app.get("/api/stories/approved", (req, res) => {
 
 app.patch(
     "/api/stories/:id/approve",
-    (req, res) => {
+    async (req, res) => {
 
-        const story =
-            stories.find(
-                item => item.id === req.params.id
+        try {
+
+            const storyId =
+                req.params.id;
+
+            const approvedAt =
+                new Date().toISOString();
+
+
+            const result =
+                await storiesCollection.updateOne(
+
+                    {
+                        id: storyId
+                    },
+
+                    {
+                        $set: {
+
+                            status:
+                                "APPROVED",
+
+                            approvedAt:
+                                approvedAt
+
+                        },
+
+                        $unset: {
+
+                            rejectedAt:
+                                ""
+
+                        }
+
+                    }
+
+                );
+
+
+            if (
+                result.matchedCount === 0
+            ) {
+
+                return res.status(404).json({
+
+                    success: false,
+
+                    message:
+                        "Story not found."
+
+                });
+
+            }
+
+
+            const updatedStory =
+                await storiesCollection.findOne({
+
+                    id: storyId
+
+                });
+
+
+            res.json({
+
+                success: true,
+
+                message:
+                    "Story approved successfully.",
+
+                story:
+                    updatedStory
+
+            });
+
+        } catch (error) {
+
+            console.error(
+                "Approve story error:",
+                error
             );
 
-
-        if (!story) {
-
-            return res.status(404).json({
+            res.status(500).json({
 
                 success: false,
 
                 message:
-                    "Story not found."
+                    "Server error."
 
             });
 
         }
-
-
-        story.status =
-            "APPROVED";
-
-
-        story.approvedAt =
-            new Date().toISOString();
-
-
-        res.json({
-
-            success: true,
-
-            message:
-                "Story approved successfully.",
-
-            story
-
-        });
 
     }
 );
@@ -268,46 +521,100 @@ app.patch(
 
 app.patch(
     "/api/stories/:id/reject",
-    (req, res) => {
+    async (req, res) => {
 
-        const story =
-            stories.find(
-                item => item.id === req.params.id
+        try {
+
+            const storyId =
+                req.params.id;
+
+            const rejectedAt =
+                new Date().toISOString();
+
+
+            const result =
+                await storiesCollection.updateOne(
+
+                    {
+                        id: storyId
+                    },
+
+                    {
+                        $set: {
+
+                            status:
+                                "REJECTED",
+
+                            rejectedAt:
+                                rejectedAt
+
+                        },
+
+                        $unset: {
+
+                            approvedAt:
+                                ""
+
+                        }
+
+                    }
+
+                );
+
+
+            if (
+                result.matchedCount === 0
+            ) {
+
+                return res.status(404).json({
+
+                    success: false,
+
+                    message:
+                        "Story not found."
+
+                });
+
+            }
+
+
+            const updatedStory =
+                await storiesCollection.findOne({
+
+                    id: storyId
+
+                });
+
+
+            res.json({
+
+                success: true,
+
+                message:
+                    "Story rejected successfully.",
+
+                story:
+                    updatedStory
+
+            });
+
+        } catch (error) {
+
+            console.error(
+                "Reject story error:",
+                error
             );
 
-
-        if (!story) {
-
-            return res.status(404).json({
+            res.status(500).json({
 
                 success: false,
 
                 message:
-                    "Story not found."
+                    "Server error."
 
             });
 
         }
-
-
-        story.status =
-            "REJECTED";
-
-
-        story.rejectedAt =
-            new Date().toISOString();
-
-
-        res.json({
-
-            success: true,
-
-            message:
-                "Story rejected successfully.",
-
-            story
-
-        });
 
     }
 );
@@ -319,39 +626,64 @@ app.patch(
 
 app.delete(
     "/api/stories/:id",
-    (req, res) => {
+    async (req, res) => {
 
-        const index =
-            stories.findIndex(
-                item => item.id === req.params.id
+        try {
+
+            const storyId =
+                req.params.id;
+
+
+            const result =
+                await storiesCollection.deleteOne({
+
+                    id: storyId
+
+                });
+
+
+            if (
+                result.deletedCount === 0
+            ) {
+
+                return res.status(404).json({
+
+                    success: false,
+
+                    message:
+                        "Story not found."
+
+                });
+
+            }
+
+
+            res.json({
+
+                success: true,
+
+                message:
+                    "Story deleted successfully."
+
+            });
+
+        } catch (error) {
+
+            console.error(
+                "Delete story error:",
+                error
             );
 
-
-        if (index === -1) {
-
-            return res.status(404).json({
+            res.status(500).json({
 
                 success: false,
 
                 message:
-                    "Story not found."
+                    "Server error."
 
             });
 
         }
-
-
-        stories.splice(index, 1);
-
-
-        res.json({
-
-            success: true,
-
-            message:
-                "Story deleted successfully."
-
-        });
 
     }
 );
@@ -361,10 +693,22 @@ app.delete(
 // START SERVER
 // ==========================================
 
-app.listen(PORT, () => {
+async function startServer() {
 
-    console.log(
-        `USMA Universe Backend running on port ${PORT}`
+    await connectDatabase();
+
+    app.listen(
+        PORT,
+        () => {
+
+            console.log(
+                `USMA Universe Backend running on port ${PORT}`
+            );
+
+        }
     );
 
-});
+}
+
+
+startServer();
