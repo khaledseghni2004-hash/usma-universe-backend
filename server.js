@@ -5,7 +5,14 @@ const { MongoClient, ObjectId } = require("mongodb");
 const app = express();
 
 const PORT = process.env.PORT || 3000;
+
 const MONGODB_URI = process.env.MONGODB_URI;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+
+// =========================================
+// MIDDLEWARE
+// =========================================
 
 app.use(cors({
     origin: "*"
@@ -17,43 +24,31 @@ app.use(express.json({
 
 
 // =========================================
-// MONGODB
+// DATABASE
 // =========================================
 
 let db;
 let storiesCollection;
 
 
-async function connectMongoDB() {
-
-    if (!MONGODB_URI) {
-
-        console.error(
-            "MONGODB_URI environment variable is missing."
-        );
-
-        process.exit(1);
-    }
-
+async function connectDatabase() {
 
     try {
 
-        const client =
-            new MongoClient(MONGODB_URI);
+        if (!MONGODB_URI) {
+            throw new Error("MONGODB_URI is not configured.");
+        }
+
+        const client = new MongoClient(MONGODB_URI);
 
         await client.connect();
 
-        db =
-            client.db("usma_universe");
+        db = client.db("usma_universe");
 
         storiesCollection =
             db.collection("stories");
 
-
-        console.log(
-            "MongoDB connected successfully."
-        );
-
+        console.log("MongoDB connected.");
 
     } catch (error) {
 
@@ -64,7 +59,6 @@ async function connectMongoDB() {
 
         process.exit(1);
     }
-
 }
 
 
@@ -75,12 +69,8 @@ async function connectMongoDB() {
 app.get("/", (req, res) => {
 
     res.json({
-
         success: true,
-
-        message:
-            "USMAPP Backend is running."
-
+        message: "USMA Universe Backend is running."
     });
 
 });
@@ -93,18 +83,74 @@ app.get("/", (req, res) => {
 app.get("/api/health", (req, res) => {
 
     res.json({
-
         success: true,
-
         status: "online"
-
     });
 
 });
 
 
 // =========================================
-// STORIES — SUBMIT
+// ADMIN LOGIN
+// =========================================
+
+app.post("/api/admin/login", (req, res) => {
+
+    try {
+
+        const { password } = req.body;
+
+        if (!ADMIN_PASSWORD) {
+
+            return res.status(500).json({
+                success: false,
+                message: "Admin password is not configured."
+            });
+
+        }
+
+        if (!password) {
+
+            return res.status(400).json({
+                success: false,
+                message: "Password is required."
+            });
+
+        }
+
+        if (password !== ADMIN_PASSWORD) {
+
+            return res.status(401).json({
+                success: false,
+                message: "Invalid admin password."
+            });
+
+        }
+
+        res.json({
+            success: true,
+            message: "Admin authentication successful."
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Admin login error:",
+            error
+        );
+
+        res.status(500).json({
+            success: false,
+            message: "Server error."
+        });
+
+    }
+
+});
+
+
+// =========================================
+// CREATE STORY
 // =========================================
 
 app.post("/api/stories", async (req, res) => {
@@ -129,7 +175,7 @@ app.post("/api/stories", async (req, res) => {
                 success: false,
 
                 message:
-                    "First name, last name and story are required."
+                    "Please complete all fields."
 
             });
 
@@ -139,19 +185,25 @@ app.post("/api/stories", async (req, res) => {
         const newStory = {
 
             firstName:
-                String(firstName).trim(),
+                firstName.trim(),
 
             lastName:
-                String(lastName).trim(),
+                lastName.trim(),
 
             story:
-                String(story).trim(),
+                story.trim(),
 
             status:
                 "PENDING",
 
             submittedAt:
-                new Date()
+                new Date().toISOString(),
+
+            approvedAt:
+                null,
+
+            rejectedAt:
+                null
 
         };
 
@@ -162,38 +214,26 @@ app.post("/api/stories", async (req, res) => {
             );
 
 
-        console.log(
-            "NEW USMA STORY:",
-            result.insertedId
-        );
-
-
         res.status(201).json({
 
             success: true,
 
             message:
-                "Your story has been submitted successfully.",
+                "Story submitted successfully.",
 
             story: {
-
-                _id:
-                    result.insertedId,
-
-                ...newStory
-
+                ...newStory,
+                _id: result.insertedId
             }
 
         });
 
-
     } catch (error) {
 
         console.error(
-            "Submit story error:",
+            "Create story error:",
             error
         );
-
 
         res.status(500).json({
 
@@ -210,20 +250,113 @@ app.post("/api/stories", async (req, res) => {
 
 
 // =========================================
-// STORIES — PENDING
+// APPROVED STORIES
+// =========================================
+
+app.get("/api/stories/approved", async (req, res) => {
+
+    try {
+
+        const stories =
+            await storiesCollection
+                .find({
+                    status: "APPROVED"
+                })
+                .sort({
+                    approvedAt: -1
+                })
+                .toArray();
+
+
+        res.json({
+
+            success: true,
+
+            stories
+
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Approved stories error:",
+            error
+        );
+
+        res.status(500).json({
+
+            success: false,
+
+            message:
+                "Server error."
+
+        });
+
+    }
+
+});
+
+
+// =========================================
+// ADMIN AUTH MIDDLEWARE
+// =========================================
+
+function requireAdmin(req, res, next) {
+
+    const password =
+        req.headers["x-admin-password"];
+
+
+    if (!ADMIN_PASSWORD) {
+
+        return res.status(500).json({
+
+            success: false,
+
+            message:
+                "Admin password is not configured."
+
+        });
+
+    }
+
+
+    if (
+        !password ||
+        password !== ADMIN_PASSWORD
+    ) {
+
+        return res.status(401).json({
+
+            success: false,
+
+            message:
+                "Unauthorized."
+
+        });
+
+    }
+
+
+    next();
+
+}
+
+
+// =========================================
+// ADMIN — GET ALL STORIES
 // =========================================
 
 app.get(
-    "/api/stories/pending",
+    "/api/admin/stories",
+    requireAdmin,
     async (req, res) => {
 
         try {
 
             const stories =
                 await storiesCollection
-                    .find({
-                        status: "PENDING"
-                    })
+                    .find({})
                     .sort({
                         submittedAt: -1
                     })
@@ -238,21 +371,19 @@ app.get(
 
             });
 
-
         } catch (error) {
 
             console.error(
-                "Pending stories error:",
+                "Admin stories error:",
                 error
             );
-
 
             res.status(500).json({
 
                 success: false,
 
                 message:
-                    "Failed to load pending stories."
+                    "Server error."
 
             });
 
@@ -263,147 +394,25 @@ app.get(
 
 
 // =========================================
-// STORIES — APPROVED
-// =========================================
-
-app.get(
-    "/api/stories/approved",
-    async (req, res) => {
-
-        try {
-
-            const stories =
-                await storiesCollection
-                    .find({
-                        status: "APPROVED"
-                    })
-                    .sort({
-                        approvedAt: -1,
-                        submittedAt: -1
-                    })
-                    .toArray();
-
-
-            res.json({
-
-                success: true,
-
-                stories
-
-            });
-
-
-        } catch (error) {
-
-            console.error(
-                "Approved stories error:",
-                error
-            );
-
-
-            res.status(500).json({
-
-                success: false,
-
-                message:
-                    "Failed to load approved stories."
-
-            });
-
-        }
-
-    }
-);
-
-
-// =========================================
-// STORIES — REJECTED
-// =========================================
-
-app.get(
-    "/api/stories/rejected",
-    async (req, res) => {
-
-        try {
-
-            const stories =
-                await storiesCollection
-                    .find({
-                        status: "REJECTED"
-                    })
-                    .sort({
-                        rejectedAt: -1,
-                        submittedAt: -1
-                    })
-                    .toArray();
-
-
-            res.json({
-
-                success: true,
-
-                stories
-
-            });
-
-
-        } catch (error) {
-
-            console.error(
-                "Rejected stories error:",
-                error
-            );
-
-
-            res.status(500).json({
-
-                success: false,
-
-                message:
-                    "Failed to load rejected stories."
-
-            });
-
-        }
-
-    }
-);
-
-
-// =========================================
-// STORIES — APPROVE
+// ADMIN — APPROVE STORY
 // =========================================
 
 app.patch(
-    "/api/stories/:id/approve",
+    "/api/admin/stories/:id/approve",
+    requireAdmin,
     async (req, res) => {
 
         try {
 
             const id =
-                req.params.id;
-
-
-            if (!ObjectId.isValid(id)) {
-
-                return res.status(400).json({
-
-                    success: false,
-
-                    message:
-                        "Invalid story ID."
-
-                });
-
-            }
+                new ObjectId(req.params.id);
 
 
             const result =
                 await storiesCollection.updateOne(
 
                     {
-                        _id:
-                            new ObjectId(id)
+                        _id: id
                     },
 
                     {
@@ -413,13 +422,10 @@ app.patch(
                                 "APPROVED",
 
                             approvedAt:
-                                new Date()
+                                new Date().toISOString(),
 
-                        },
-
-                        $unset: {
-
-                            rejectedAt: ""
+                            rejectedAt:
+                                null
 
                         }
 
@@ -453,7 +459,6 @@ app.patch(
 
             });
 
-
         } catch (error) {
 
             console.error(
@@ -461,13 +466,12 @@ app.patch(
                 error
             );
 
-
             res.status(500).json({
 
                 success: false,
 
                 message:
-                    "Failed to approve story."
+                    "Server error."
 
             });
 
@@ -478,39 +482,25 @@ app.patch(
 
 
 // =========================================
-// STORIES — REJECT
+// ADMIN — REJECT STORY
 // =========================================
 
 app.patch(
-    "/api/stories/:id/reject",
+    "/api/admin/stories/:id/reject",
+    requireAdmin,
     async (req, res) => {
 
         try {
 
             const id =
-                req.params.id;
-
-
-            if (!ObjectId.isValid(id)) {
-
-                return res.status(400).json({
-
-                    success: false,
-
-                    message:
-                        "Invalid story ID."
-
-                });
-
-            }
+                new ObjectId(req.params.id);
 
 
             const result =
                 await storiesCollection.updateOne(
 
                     {
-                        _id:
-                            new ObjectId(id)
+                        _id: id
                     },
 
                     {
@@ -520,13 +510,10 @@ app.patch(
                                 "REJECTED",
 
                             rejectedAt:
-                                new Date()
+                                new Date().toISOString(),
 
-                        },
-
-                        $unset: {
-
-                            approvedAt: ""
+                            approvedAt:
+                                null
 
                         }
 
@@ -560,7 +547,6 @@ app.patch(
 
             });
 
-
         } catch (error) {
 
             console.error(
@@ -568,13 +554,12 @@ app.patch(
                 error
             );
 
-
             res.status(500).json({
 
                 success: false,
 
                 message:
-                    "Failed to reject story."
+                    "Server error."
 
             });
 
@@ -585,38 +570,24 @@ app.patch(
 
 
 // =========================================
-// STORIES — DELETE
+// ADMIN — DELETE STORY
 // =========================================
 
 app.delete(
-    "/api/stories/:id",
+    "/api/admin/stories/:id",
+    requireAdmin,
     async (req, res) => {
 
         try {
 
             const id =
-                req.params.id;
-
-
-            if (!ObjectId.isValid(id)) {
-
-                return res.status(400).json({
-
-                    success: false,
-
-                    message:
-                        "Invalid story ID."
-
-                });
-
-            }
+                new ObjectId(req.params.id);
 
 
             const result =
                 await storiesCollection.deleteOne({
 
-                    _id:
-                        new ObjectId(id)
+                    _id: id
 
                 });
 
@@ -646,141 +617,12 @@ app.delete(
 
             });
 
-
         } catch (error) {
 
             console.error(
                 "Delete story error:",
                 error
             );
-
-
-            res.status(500).json({
-
-                success: false,
-
-                message:
-                    "Failed to delete story."
-
-            });
-
-        }
-
-    }
-);
-
-
-// =========================================
-// VERIFICATION
-// =========================================
-
-app.post(
-    "/api/verification",
-    (req, res) => {
-
-        try {
-
-            const {
-                fullName,
-                birthDate,
-                wilaya,
-                phone,
-                supportingSince,
-                stand,
-                profilePhoto,
-                identityDocument
-            } = req.body;
-
-
-            if (
-                !fullName ||
-                !birthDate ||
-                !wilaya ||
-                !phone ||
-                !profilePhoto ||
-                !identityDocument
-            ) {
-
-                return res.status(400).json({
-
-                    success: false,
-
-                    message:
-                        "Missing required information."
-
-                });
-
-            }
-
-
-            const applicationId =
-                "USMA-" +
-                Date.now()
-                    .toString()
-                    .slice(-6);
-
-
-            const application = {
-
-                id:
-                    applicationId,
-
-                fullName,
-
-                birthDate,
-
-                wilaya,
-
-                phone,
-
-                supportingSince,
-
-                stand,
-
-                profilePhoto,
-
-                identityDocument,
-
-                status:
-                    "PENDING",
-
-                submittedAt:
-                    new Date().toISOString()
-
-            };
-
-
-            console.log(
-                "================================="
-            );
-
-            console.log(
-                "NEW USMAPP APPLICATION"
-            );
-
-            console.log(application);
-
-            console.log(
-                "================================="
-            );
-
-
-            res.status(201).json({
-
-                success: true,
-
-                message:
-                    "Verification submitted successfully.",
-
-                application
-
-            });
-
-
-        } catch (error) {
-
-            console.error(error);
-
 
             res.status(500).json({
 
@@ -803,19 +645,16 @@ app.post(
 
 async function startServer() {
 
-    await connectMongoDB();
+    await connectDatabase();
 
 
-    app.listen(
-        PORT,
-        () => {
+    app.listen(PORT, () => {
 
-            console.log(
-                `USMAPP Backend is running on port ${PORT}`
-            );
+        console.log(
+            `USMA Universe Backend running on port ${PORT}`
+        );
 
-        }
-    );
+    });
 
 }
 
