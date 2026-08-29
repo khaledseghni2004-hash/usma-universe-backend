@@ -1,37 +1,30 @@
 const express = require("express");
 const cors = require("cors");
-const { MongoClient } = require("mongodb");
+const { MongoClient, ObjectId } = require("mongodb");
 
 const app = express();
 
 const PORT = process.env.PORT || 3000;
 const MONGODB_URI = process.env.MONGODB_URI;
 
-const DB_NAME = "usma_universe";
-const COLLECTION_NAME = "stories";
-
-
-// ==========================================
-// MIDDLEWARE
-// ==========================================
-
 app.use(cors({
     origin: "*"
 }));
 
 app.use(express.json({
-    limit: "10mb"
+    limit: "20mb"
 }));
 
 
-// ==========================================
+// =========================================
 // MONGODB
-// ==========================================
+// =========================================
 
 let db;
 let storiesCollection;
 
-async function connectDatabase() {
+
+async function connectMongoDB() {
 
     if (!MONGODB_URI) {
 
@@ -40,8 +33,8 @@ async function connectDatabase() {
         );
 
         process.exit(1);
-
     }
+
 
     try {
 
@@ -51,34 +44,16 @@ async function connectDatabase() {
         await client.connect();
 
         db =
-            client.db(DB_NAME);
+            client.db("usma_universe");
 
         storiesCollection =
-            db.collection(COLLECTION_NAME);
+            db.collection("stories");
 
-        await db.command({
-            ping: 1
-        });
 
         console.log(
-            "================================="
+            "MongoDB connected successfully."
         );
 
-        console.log(
-            "MongoDB Atlas connected successfully."
-        );
-
-        console.log(
-            `Database: ${DB_NAME}`
-        );
-
-        console.log(
-            `Collection: ${COLLECTION_NAME}`
-        );
-
-        console.log(
-            "================================="
-        );
 
     } catch (error) {
 
@@ -88,15 +63,14 @@ async function connectDatabase() {
         );
 
         process.exit(1);
-
     }
 
 }
 
 
-// ==========================================
+// =========================================
 // HOME
-// ==========================================
+// =========================================
 
 app.get("/", (req, res) => {
 
@@ -105,59 +79,33 @@ app.get("/", (req, res) => {
         success: true,
 
         message:
-            "USMA Universe Backend is running."
+            "USMAPP Backend is running."
 
     });
 
 });
 
 
-// ==========================================
+// =========================================
 // HEALTH CHECK
-// ==========================================
+// =========================================
 
-app.get("/api/health", async (req, res) => {
+app.get("/api/health", (req, res) => {
 
-    try {
+    res.json({
 
-        await db.command({
-            ping: 1
-        });
+        success: true,
 
-        res.json({
+        status: "online"
 
-            success: true,
-
-            status:
-                "online",
-
-            database:
-                "connected"
-
-        });
-
-    } catch (error) {
-
-        res.status(500).json({
-
-            success: false,
-
-            status:
-                "offline",
-
-            database:
-                "disconnected"
-
-        });
-
-    }
+    });
 
 });
 
 
-// ==========================================
-// SUBMIT STORY
-// ==========================================
+// =========================================
+// STORIES — SUBMIT
+// =========================================
 
 app.post("/api/stories", async (req, res) => {
 
@@ -170,8 +118,6 @@ app.post("/api/stories", async (req, res) => {
         } = req.body;
 
 
-        // Check required fields
-
         if (
             !firstName ||
             !lastName ||
@@ -183,92 +129,42 @@ app.post("/api/stories", async (req, res) => {
                 success: false,
 
                 message:
-                    "Please complete all required fields."
+                    "First name, last name and story are required."
 
             });
 
         }
 
-
-        // Clean input
-
-        const cleanFirstName =
-            firstName.trim();
-
-        const cleanLastName =
-            lastName.trim();
-
-        const cleanStory =
-            story.trim();
-
-
-        // Check empty values
-
-        if (
-            !cleanFirstName ||
-            !cleanLastName ||
-            !cleanStory
-        ) {
-
-            return res.status(400).json({
-
-                success: false,
-
-                message:
-                    "Please complete all required fields."
-
-            });
-
-        }
-
-
-        // Create story
 
         const newStory = {
 
-            id:
-                "VOICE-" +
-                Date.now()
-                    .toString()
-                    .slice(-6),
-
             firstName:
-                cleanFirstName,
+                String(firstName).trim(),
 
             lastName:
-                cleanLastName,
+                String(lastName).trim(),
 
             story:
-                cleanStory,
+                String(story).trim(),
 
             status:
                 "PENDING",
 
             submittedAt:
-                new Date().toISOString()
+                new Date()
 
         };
 
 
-        // Save to MongoDB
+        const result =
+            await storiesCollection.insertOne(
+                newStory
+            );
 
-        await storiesCollection.insertOne(
-            newStory
-        );
-
-
-        console.log(
-            "================================="
-        );
 
         console.log(
-            "NEW USMA VOICE"
-        );
-
-        console.log(newStory);
-
-        console.log(
-            "================================="
+            "NEW USMA STORY:",
+            result.insertedId
         );
 
 
@@ -279,8 +175,14 @@ app.post("/api/stories", async (req, res) => {
             message:
                 "Your story has been submitted successfully.",
 
-            story:
-                newStory
+            story: {
+
+                _id:
+                    result.insertedId,
+
+                ...newStory
+
+            }
 
         });
 
@@ -291,6 +193,7 @@ app.post("/api/stories", async (req, res) => {
             "Submit story error:",
             error
         );
+
 
         res.status(500).json({
 
@@ -306,9 +209,9 @@ app.post("/api/stories", async (req, res) => {
 });
 
 
-// ==========================================
-// GET PENDING STORIES
-// ==========================================
+// =========================================
+// STORIES — PENDING
+// =========================================
 
 app.get(
     "/api/stories/pending",
@@ -316,7 +219,7 @@ app.get(
 
         try {
 
-            const pendingStories =
+            const stories =
                 await storiesCollection
                     .find({
                         status: "PENDING"
@@ -331,24 +234,25 @@ app.get(
 
                 success: true,
 
-                stories:
-                    pendingStories
+                stories
 
             });
+
 
         } catch (error) {
 
             console.error(
-                "Get pending stories error:",
+                "Pending stories error:",
                 error
             );
+
 
             res.status(500).json({
 
                 success: false,
 
                 message:
-                    "Server error."
+                    "Failed to load pending stories."
 
             });
 
@@ -358,9 +262,9 @@ app.get(
 );
 
 
-// ==========================================
-// GET APPROVED STORIES
-// ==========================================
+// =========================================
+// STORIES — APPROVED
+// =========================================
 
 app.get(
     "/api/stories/approved",
@@ -368,13 +272,14 @@ app.get(
 
         try {
 
-            const approvedStories =
+            const stories =
                 await storiesCollection
                     .find({
                         status: "APPROVED"
                     })
                     .sort({
-                        approvedAt: -1
+                        approvedAt: -1,
+                        submittedAt: -1
                     })
                     .toArray();
 
@@ -383,24 +288,25 @@ app.get(
 
                 success: true,
 
-                stories:
-                    approvedStories
+                stories
 
             });
+
 
         } catch (error) {
 
             console.error(
-                "Get approved stories error:",
+                "Approved stories error:",
                 error
             );
+
 
             res.status(500).json({
 
                 success: false,
 
                 message:
-                    "Server error."
+                    "Failed to load approved stories."
 
             });
 
@@ -410,9 +316,63 @@ app.get(
 );
 
 
-// ==========================================
-// APPROVE STORY
-// ==========================================
+// =========================================
+// STORIES — REJECTED
+// =========================================
+
+app.get(
+    "/api/stories/rejected",
+    async (req, res) => {
+
+        try {
+
+            const stories =
+                await storiesCollection
+                    .find({
+                        status: "REJECTED"
+                    })
+                    .sort({
+                        rejectedAt: -1,
+                        submittedAt: -1
+                    })
+                    .toArray();
+
+
+            res.json({
+
+                success: true,
+
+                stories
+
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "Rejected stories error:",
+                error
+            );
+
+
+            res.status(500).json({
+
+                success: false,
+
+                message:
+                    "Failed to load rejected stories."
+
+            });
+
+        }
+
+    }
+);
+
+
+// =========================================
+// STORIES — APPROVE
+// =========================================
 
 app.patch(
     "/api/stories/:id/approve",
@@ -420,18 +380,30 @@ app.patch(
 
         try {
 
-            const storyId =
+            const id =
                 req.params.id;
 
-            const approvedAt =
-                new Date().toISOString();
+
+            if (!ObjectId.isValid(id)) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    message:
+                        "Invalid story ID."
+
+                });
+
+            }
 
 
             const result =
                 await storiesCollection.updateOne(
 
                     {
-                        id: storyId
+                        _id:
+                            new ObjectId(id)
                     },
 
                     {
@@ -441,14 +413,13 @@ app.patch(
                                 "APPROVED",
 
                             approvedAt:
-                                approvedAt
+                                new Date()
 
                         },
 
                         $unset: {
 
-                            rejectedAt:
-                                ""
+                            rejectedAt: ""
 
                         }
 
@@ -473,25 +444,15 @@ app.patch(
             }
 
 
-            const updatedStory =
-                await storiesCollection.findOne({
-
-                    id: storyId
-
-                });
-
-
             res.json({
 
                 success: true,
 
                 message:
-                    "Story approved successfully.",
-
-                story:
-                    updatedStory
+                    "Story approved successfully."
 
             });
+
 
         } catch (error) {
 
@@ -500,12 +461,13 @@ app.patch(
                 error
             );
 
+
             res.status(500).json({
 
                 success: false,
 
                 message:
-                    "Server error."
+                    "Failed to approve story."
 
             });
 
@@ -515,9 +477,9 @@ app.patch(
 );
 
 
-// ==========================================
-// REJECT STORY
-// ==========================================
+// =========================================
+// STORIES — REJECT
+// =========================================
 
 app.patch(
     "/api/stories/:id/reject",
@@ -525,18 +487,30 @@ app.patch(
 
         try {
 
-            const storyId =
+            const id =
                 req.params.id;
 
-            const rejectedAt =
-                new Date().toISOString();
+
+            if (!ObjectId.isValid(id)) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    message:
+                        "Invalid story ID."
+
+                });
+
+            }
 
 
             const result =
                 await storiesCollection.updateOne(
 
                     {
-                        id: storyId
+                        _id:
+                            new ObjectId(id)
                     },
 
                     {
@@ -546,14 +520,13 @@ app.patch(
                                 "REJECTED",
 
                             rejectedAt:
-                                rejectedAt
+                                new Date()
 
                         },
 
                         $unset: {
 
-                            approvedAt:
-                                ""
+                            approvedAt: ""
 
                         }
 
@@ -578,25 +551,15 @@ app.patch(
             }
 
 
-            const updatedStory =
-                await storiesCollection.findOne({
-
-                    id: storyId
-
-                });
-
-
             res.json({
 
                 success: true,
 
                 message:
-                    "Story rejected successfully.",
-
-                story:
-                    updatedStory
+                    "Story rejected successfully."
 
             });
+
 
         } catch (error) {
 
@@ -605,12 +568,13 @@ app.patch(
                 error
             );
 
+
             res.status(500).json({
 
                 success: false,
 
                 message:
-                    "Server error."
+                    "Failed to reject story."
 
             });
 
@@ -620,9 +584,9 @@ app.patch(
 );
 
 
-// ==========================================
-// DELETE STORY
-// ==========================================
+// =========================================
+// STORIES — DELETE
+// =========================================
 
 app.delete(
     "/api/stories/:id",
@@ -630,14 +594,29 @@ app.delete(
 
         try {
 
-            const storyId =
+            const id =
                 req.params.id;
+
+
+            if (!ObjectId.isValid(id)) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    message:
+                        "Invalid story ID."
+
+                });
+
+            }
 
 
             const result =
                 await storiesCollection.deleteOne({
 
-                    id: storyId
+                    _id:
+                        new ObjectId(id)
 
                 });
 
@@ -667,12 +646,141 @@ app.delete(
 
             });
 
+
         } catch (error) {
 
             console.error(
                 "Delete story error:",
                 error
             );
+
+
+            res.status(500).json({
+
+                success: false,
+
+                message:
+                    "Failed to delete story."
+
+            });
+
+        }
+
+    }
+);
+
+
+// =========================================
+// VERIFICATION
+// =========================================
+
+app.post(
+    "/api/verification",
+    (req, res) => {
+
+        try {
+
+            const {
+                fullName,
+                birthDate,
+                wilaya,
+                phone,
+                supportingSince,
+                stand,
+                profilePhoto,
+                identityDocument
+            } = req.body;
+
+
+            if (
+                !fullName ||
+                !birthDate ||
+                !wilaya ||
+                !phone ||
+                !profilePhoto ||
+                !identityDocument
+            ) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    message:
+                        "Missing required information."
+
+                });
+
+            }
+
+
+            const applicationId =
+                "USMA-" +
+                Date.now()
+                    .toString()
+                    .slice(-6);
+
+
+            const application = {
+
+                id:
+                    applicationId,
+
+                fullName,
+
+                birthDate,
+
+                wilaya,
+
+                phone,
+
+                supportingSince,
+
+                stand,
+
+                profilePhoto,
+
+                identityDocument,
+
+                status:
+                    "PENDING",
+
+                submittedAt:
+                    new Date().toISOString()
+
+            };
+
+
+            console.log(
+                "================================="
+            );
+
+            console.log(
+                "NEW USMAPP APPLICATION"
+            );
+
+            console.log(application);
+
+            console.log(
+                "================================="
+            );
+
+
+            res.status(201).json({
+
+                success: true,
+
+                message:
+                    "Verification submitted successfully.",
+
+                application
+
+            });
+
+
+        } catch (error) {
+
+            console.error(error);
+
 
             res.status(500).json({
 
@@ -689,20 +797,21 @@ app.delete(
 );
 
 
-// ==========================================
+// =========================================
 // START SERVER
-// ==========================================
+// =========================================
 
 async function startServer() {
 
-    await connectDatabase();
+    await connectMongoDB();
+
 
     app.listen(
         PORT,
         () => {
 
             console.log(
-                `USMA Universe Backend running on port ${PORT}`
+                `USMAPP Backend is running on port ${PORT}`
             );
 
         }
